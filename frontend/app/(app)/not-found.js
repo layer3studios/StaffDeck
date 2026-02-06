@@ -1,23 +1,22 @@
-'use client'
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
-import { useRouter } from 'next/navigation'
 import { AlertCircle } from 'lucide-react'
 
 export default function NotFound() {
-    const router = useRouter()
-
-    return (
-        <div className="flex flex-col items-center justify-center min-h-[60vh]">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-900/30 mb-4">
-                <AlertCircle className="h-8 w-8 text-rose-600 dark:text-rose-400" />
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight mb-2">Page not found</h1>
-            <p className="text-sm text-muted-foreground mb-6 text-center max-w-md">
-                The page you're looking for doesn't exist or has been moved.
-            </p>
-            <Button onClick={() => router.push('/dashboard')}>
-                Back to Dashboard
-            </Button>
-        </div>
-    )
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+      <div className="bg-red-100 p-4 rounded-full mb-6">
+        <AlertCircle className="h-10 w-10 text-red-600" />
+      </div>
+      <h2 className="text-3xl font-bold tracking-tight mb-2">Page Not Found</h2>
+      <p className="text-muted-foreground mb-8 max-w-[400px]">
+        The page you are looking for does not exist or has been moved to another URL.
+      </p>
+      <Link href="/dashboard">
+        <Button className="bg-violet-600 hover:bg-violet-700">
+          Return to Dashboard
+        </Button>
+      </Link>
+    </div>
+  )
 }
