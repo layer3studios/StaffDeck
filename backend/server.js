@@ -13,10 +13,8 @@ connectDB();
 // Middleware
 app.use(helmet());
 app.use(cors({
-    origin: process.env.NODE_ENV === 'production'
-        ? 'https://yourdomain.com'
-        : 'http://localhost:3000',
-    credentials: true
+    origin: '*', 
+    credentials: true 
 }));
 app.use(morgan('dev'));
 app.use(express.json());
