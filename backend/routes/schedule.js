@@ -9,30 +9,14 @@ const validate = require('../middleware/validate');
 
 router.use(protect, requireOrg);
 
-// Schemas
-const requestLeaveSchema = z.object({
-    body: z.object({
-        type: z.enum(['Sick', 'Vacation', 'Personal', 'Other']),
-        startDate: z.string().datetime(),
-        endDate: z.string().datetime(),
-        reason: z.string().min(3)
-    })
-});
-
-const actionSchema = z.object({
-    body: z.object({
-        status: z.enum(['APPROVED', 'REJECTED'])
-    })
-});
-
-// @route   GET /api/schedule/calendar
-// @desc    Get all approved leaves for the calendar view
+// --- 1. GET CALENDAR (The Source of Truth) ---
+// Returns ALL approved leaves so everyone knows who is away.
 router.get('/calendar', async (req, res) => {
     try {
         const leaves = await LeaveRequest.find({
             organizationId: req.orgId,
             status: 'APPROVED'
-        }).populate('employeeId', 'firstName lastName avatar role');
+        }).populate('employeeId', 'firstName lastName avatar role department');
 
         res.json({ success: true, data: leaves });
     } catch (error) {
@@ -40,13 +24,14 @@ router.get('/calendar', async (req, res) => {
     }
 });
 
-// @route   GET /api/schedule/requests
-// @desc    Get pending requests (Admin: All, Staff: Own)
+// --- 2. GET REQUESTS (The Workflow Engine) ---
+// Admin: Sees ALL requests.
+// Staff: Sees ONLY their own requests.
 router.get('/requests', async (req, res) => {
     try {
         const query = { organizationId: req.orgId };
         
-        // If not admin, restrict to self
+        // If Staff, restrict to self
         if (req.user.role !== 'ADMIN') {
             query.employeeId = req.user.employeeId;
         }
@@ -61,15 +46,23 @@ router.get('/requests', async (req, res) => {
     }
 });
 
-// @route   POST /api/schedule/request
-// @desc    Submit a leave request
-router.post('/request', validate(requestLeaveSchema), async (req, res) => {
+// --- 3. SUBMIT REQUEST (The Ask) ---
+const requestSchema = z.object({
+    body: z.object({
+        type: z.enum(['Vacation', 'Sick', 'Personal', 'Other']),
+        startDate: z.string().datetime(),
+        endDate: z.string().datetime(),
+        reason: z.string().optional()
+    })
+});
+
+router.post('/request', validate(requestSchema), async (req, res) => {
     try {
         const { type, startDate, endDate, reason } = req.body;
 
-        // Basic date validation
-        if (new Date(startDate) > new Date(endDate)) {
-            return res.status(400).json({ success: false, message: 'Start date cannot be after end date' });
+        // Validation: End date cannot be before start date
+        if (new Date(endDate) < new Date(startDate)) {
+            return res.status(400).json({ success: false, message: 'End date cannot be before start date' });
         }
 
         const request = await LeaveRequest.create({
@@ -78,44 +71,54 @@ router.post('/request', validate(requestLeaveSchema), async (req, res) => {
             type,
             startDate,
             endDate,
-            reason
+            reason,
+            status: 'PENDING'
         });
 
-        res.status(201).json({ success: true, data: request, message: 'Leave request submitted' });
+        res.status(201).json({ success: true, data: request, message: 'Request submitted successfully' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
 });
 
-// @route   PUT /api/schedule/requests/:id/action
-// @desc    Approve/Reject request (Admin Only)
-router.put('/requests/:id/action', authorize('ADMIN'), validate(actionSchema), async (req, res) => {
+// --- 4. APPROVE/REJECT (The Decision) ---
+// Only Admins can do this.
+// CRITICAL: If Approved, we MUST deduct the balance from the Employee record.
+router.put('/requests/:id/action', authorize('ADMIN'), async (req, res) => {
     try {
-        const { status } = req.body;
-        const request = await LeaveRequest.findOne({ _id: req.params.id, organizationId: req.orgId });
+        const { status } = req.body; // 'APPROVED' or 'REJECTED'
+        if (!['APPROVED', 'REJECTED'].includes(status)) {
+            return res.status(400).json({ message: 'Invalid status' });
+        }
 
-        if (!request) return res.status(404).json({ success: false, message: 'Request not found' });
-        if (request.status !== 'PENDING') return res.status(400).json({ success: false, message: 'Request already processed' });
+        const request = await LeaveRequest.findById(req.params.id);
+        if (!request) return res.status(404).json({ message: 'Request not found' });
+        if (request.status !== 'PENDING') return res.status(400).json({ message: 'Request already processed' });
 
+        // Update Request Status
         request.status = status;
         request.reviewedBy = req.user._id;
         await request.save();
 
-        // If Approved, deduct balance & update Employee status
+        // LOGIC: If Approved, deduct balance
         if (status === 'APPROVED') {
-            const days = Math.ceil((new Date(request.endDate) - new Date(request.startDate)) / (1000 * 60 * 60 * 24)) + 1;
+            const start = new Date(request.startDate);
+            const end = new Date(request.endDate);
+            // Calculate days (inclusive)
+            const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
             
-            await Employee.findByIdAndUpdate(request.employeeId, {
+            await Employee.findByIdAndUpdate(request.employeeId, { 
                 $inc: { leaveBalance: -days },
-                status: 'On Leave' // Simple status update
+                status: 'On Leave'
             });
 
+            // Audit Log
             await AuditLog.create({
                 organizationId: req.orgId,
                 action: 'Leave Approved',
                 actor: `${req.user.firstName} ${req.user.lastName}`,
                 actorId: req.user._id,
-                target: `Leave Request`,
+                target: 'Leave Request',
                 targetId: request._id,
                 details: `Approved ${days} days for ${request.type}`
             });
