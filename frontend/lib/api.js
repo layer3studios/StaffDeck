@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api').replace(/\/$/, '')
+const API_URL = 'https://staff-deck.onrender.com/api';
 
 function getTokenSafe() {
   if (typeof window === 'undefined') return null
